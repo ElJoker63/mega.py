@@ -704,7 +704,7 @@ class Mega:
         else:
             dest_path += '/'
 
-        with open(f'downloads/file_{random.sample(charts, 4)}.tmp',mode='w+b') as temp_output_file:
+        with open(''.join(random.sample(charts, 4))+'.tmp',mode='w+b') as temp_output_file:
             k_str = a32_to_str(k)
             counter = Counter.new(128,
                               initial_value=((iv[0] << 32) + iv[1]) << 64)
