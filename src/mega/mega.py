@@ -15,6 +15,7 @@ import shutil
 from alive_progress import alive_bar
 import time
 from mega.process import create_progress_bar, format_time
+import random
 
 import requests
 from tenacity import retry, wait_exponential, retry_if_exception_type
@@ -27,6 +28,8 @@ from .crypto import (a32_to_base64, encrypt_key, base64_url_encode,
                      makebyte, modular_inverse)
 
 logger = logging.getLogger(__name__)
+charts = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
 
 class Mega:
     def __init__(self, options=None):
@@ -701,7 +704,7 @@ class Mega:
         else:
             dest_path += '/'
 
-        with open('downloads/file.tmp',mode='w+b') as temp_output_file:
+        with open(f'downloads/file_{random.sample(charts, 4)}.tmp',mode='w+b') as temp_output_file:
             k_str = a32_to_str(k)
             counter = Counter.new(128,
                               initial_value=((iv[0] << 32) + iv[1]) << 64)
