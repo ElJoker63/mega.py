@@ -11,8 +11,8 @@ def test():
     """
     unique = str(uuid.uuid4())
     # user details
-    email = os.environ['EMAIL']
-    password = os.environ['PASS']
+    email = os.environ["EMAIL"]
+    password = os.environ["PASS"]
 
     mega = Mega()
     # mega = Mega({'verbose': True})  # verbose option for print output
@@ -37,11 +37,10 @@ def test():
         print((files[file]))
 
     # upload file
-    print((m.upload(filename='examples.py',
-                    dest_filename=f'examples_{unique}.py')))
+    print((m.upload(filename="examples.py", dest_filename=f"examples_{unique}.py")))
 
     # search for a file in account
-    file = m.find(f'examples_{unique}.py')
+    file = m.find(f"examples_{unique}.py")
 
     if file:
         # get public link
@@ -49,7 +48,7 @@ def test():
         print(link)
 
         # download file. by file object or url
-        print(m.download(file, '/tmp'))
+        print(m.download(file, "/tmp"))
         # m.download_url(link)
 
         # delete or destroy file. by id or url
@@ -62,5 +61,5 @@ def test():
     print((m.empty_trash()))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()

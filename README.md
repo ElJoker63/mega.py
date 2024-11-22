@@ -11,10 +11,6 @@ Learn how to use it: https://github.com/meganz/MEGAcmd/blob/master/UserGuide.md
 Mega.py
 =======
 
-[![Build
-Status](https://travis-ci.org/odwyersoftware/mega.py.png?branch=master)](https://travis-ci.org/odwyersoftware/mega.py)
-[![Downloads](https://pypip.in/d/mega.py/badge.png)](https://crate.io/packages/mega.py/)  [![PyPI version](https://badge.fury.io/py/mega.py.svg)](https://pypi.org/project/mega.py/)
-
 Python library for the [Mega.co.nz](https://mega.nz/aff=Zo6IxNaHw14)
 API, currently supporting:
 
@@ -170,9 +166,3 @@ Returns a dict of folder node name and node\_id, e.g.
 file = m.find('myfile.doc')
 m.rename(file, 'my_file.doc')
 ```
-
-## Contact Support
-
-For paid priority support contact [mega@odwyer.software](mailto:mega@odwyer.software).
-
-**[UK Python Development Agency](https://odwyer.software/)**

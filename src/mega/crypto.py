@@ -7,13 +7,14 @@ import random
 import sys
 
 # Python3 compatibility
-if sys.version_info < (3, ):
+if sys.version_info < (3,):
 
     def makebyte(x):
         return x
 
     def makestring(x):
         return x
+
 else:
     import codecs
 
@@ -25,12 +26,12 @@ else:
 
 
 def aes_cbc_encrypt(data, key):
-    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte('\0' * 16))
+    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte("\0" * 16))
     return aes_cipher.encrypt(data)
 
 
 def aes_cbc_decrypt(data, key):
-    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte('\0' * 16))
+    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte("\0" * 16))
     return aes_cipher.decrypt(data)
 
 
@@ -65,31 +66,33 @@ def prepare_key(arr):
 
 
 def encrypt_key(a, key):
-    return sum((aes_cbc_encrypt_a32(a[i:i + 4], key)
-                for i in range(0, len(a), 4)), ())
+    return sum(
+        (aes_cbc_encrypt_a32(a[i : i + 4], key) for i in range(0, len(a), 4)), ()
+    )
 
 
 def decrypt_key(a, key):
-    return sum((aes_cbc_decrypt_a32(a[i:i + 4], key)
-                for i in range(0, len(a), 4)), ())
+    return sum(
+        (aes_cbc_decrypt_a32(a[i : i + 4], key) for i in range(0, len(a), 4)), ()
+    )
 
 
 def encrypt_attr(attr, key):
-    attr = makebyte('MEGA' + json.dumps(attr))
+    attr = makebyte("MEGA" + json.dumps(attr))
     if len(attr) % 16:
-        attr += b'\0' * (16 - len(attr) % 16)
+        attr += b"\0" * (16 - len(attr) % 16)
     return aes_cbc_encrypt(attr, a32_to_str(key))
 
 
 def decrypt_attr(attr, key):
     attr = aes_cbc_decrypt(attr, a32_to_str(key))
     attr = makestring(attr)
-    attr = attr.rstrip('\0')
+    attr = attr.rstrip("\0")
     return json.loads(attr[4:]) if attr[:6] == 'MEGA{"' else False
 
 
 def a32_to_str(a):
-    return struct.pack('>%dI' % len(a), *a)
+    return struct.pack(">%dI" % len(a), *a)
 
 
 def str_to_a32(b):
@@ -97,8 +100,8 @@ def str_to_a32(b):
         b = makebyte(b)
     if len(b) % 4:
         # pad to multiple of 4
-        b += b'\0' * (4 - len(b) % 4)
-    return struct.unpack('>%dI' % (len(b) / 4), b)
+        b += b"\0" * (4 - len(b) % 4)
+    return struct.unpack(">%dI" % (len(b) / 4), b)
 
 
 def mpi_to_int(s):
@@ -121,14 +124,14 @@ def extended_gcd(a, b):
 def modular_inverse(a, m):
     g, x, y = extended_gcd(a, m)
     if g != 1:
-        raise Exception('modular inverse does not exist')
+        raise Exception("modular inverse does not exist")
     else:
         return x % m
 
 
 def base64_url_decode(data):
-    data += '=='[(2 - len(data) * 3) % 4:]
-    for search, replace in (('-', '+'), ('_', '/'), (',', '')):
+    data += "=="[(2 - len(data) * 3) % 4 :]
+    for search, replace in (("-", "+"), ("_", "/"), (",", "")):
         data = data.replace(search, replace)
     return base64.b64decode(data)
 
@@ -140,7 +143,7 @@ def base64_to_a32(s):
 def base64_url_encode(data):
     data = base64.b64encode(data)
     data = makestring(data)
-    for search, replace in (('+', '-'), ('/', '_'), ('=', '')):
+    for search, replace in (("+", "-"), ("/", "_"), ("=", "")):
         data = data.replace(search, replace)
     return data
 
@@ -161,7 +164,7 @@ def get_chunks(size):
 
 
 def make_id(length):
-    text = ''
+    text = ""
     possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     for i in range(length):
         text += random.choice(possible)

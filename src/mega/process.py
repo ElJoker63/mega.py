@@ -1,14 +1,15 @@
-from humanize import naturaldate,naturalday,naturaldelta,naturalsize,naturaltime
+from humanize import naturaldate, naturalday, naturaldelta, naturalsize, naturaltime
 import os
 from platform import system
 
 global cmd
-if system() == 'Linux':
-    cmd = 'clear'
-elif system() == 'Windows':
-    cmd = 'cls'
+if system() == "Linux":
+    cmd = "clear"
+elif system() == "Windows":
+    cmd = "cls"
 
 start_time = 0
+
 
 def create_progress_bar(current, total, filename, eta, speed, length=20):
     filled_length = int(length * current // total)
@@ -16,6 +17,7 @@ def create_progress_bar(current, total, filename, eta, speed, length=20):
     percentage = round((current / total) * 100, 2)
     os.system(cmd)
     return f"{filename}\nDownload: {percentage}%\n[{bar}]\n{naturalsize(current)} of {naturalsize(total)}\nSpeed: {naturalsize(speed)}/s\nETA: {format_time(int(eta))}"
+
 
 def format_time(seconds):
     hours = seconds // 3600
