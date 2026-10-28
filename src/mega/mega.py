@@ -3,6 +3,8 @@ import re
 import json
 import logging
 import secrets
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 from Crypto.Cipher import AES
@@ -43,6 +45,35 @@ from .crypto import (
 
 logger = logging.getLogger(__name__)
 charts = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+
+def clean_filename(name: str) -> str:
+    cleaned = re.sub(r'[\/\\:\*\?"<>\|\x00-\x1f\x7f-\x9f]', '_', str(name or "")).strip()
+    return cleaned or "archivo"
+
+
+@contextmanager
+def safe_alive_bar(total, title="", **kwargs):
+    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    can_encode = False
+    if is_tty:
+        try:
+            "━█●".encode(getattr(sys.stdout, "encoding", "") or "ascii")
+            can_encode = True
+        except Exception:
+            can_encode = False
+    if not is_tty or not can_encode:
+        def dummy_bar(n=1):
+            pass
+        yield dummy_bar
+        return
+    try:
+        with alive_bar(total, title=title, **kwargs) as bar:
+            yield bar
+    except Exception:
+        def dummy_bar(n=1):
+            pass
+        yield dummy_bar
 
 
 class Mega:
@@ -211,20 +242,27 @@ class Mega:
 
     def _parse_url(self, url):
         """Parse file id and key from url."""
-        if "/file/" in url:
-            # V2 URL structure
-            url = url.replace(" ", "")
-            file_id = re.findall(r"\W\w\w\w\w\w\w\w\w\W", url)[0][1:-1]
-            id_index = re.search(file_id, url).end()
-            key = url[id_index + 1 :]
-            return f"{file_id}!{key}"
-        elif "!" in url:
-            # V1 URL structure
-            match = re.findall(r"/#!(.*)", url)
-            path = match[0]
-            return path
-        else:
-            raise RequestError("Url key missing")
+        u = str(url or "").strip()
+        if "/file/" in u:
+            # V2 URL structure: /file/ID#KEY
+            parts = u.split("/file/", 1)[1].split("?", 1)[0].rstrip("/")
+            if "#" in parts:
+                file_id, key = parts.split("#", 1)
+                return f"{file_id.split('/')[0].strip()}!{key.split('/')[0].strip()}"
+            elif "!" in parts:
+                sub = parts.lstrip("#!").split("!")
+                if len(sub) >= 2:
+                    return f"{sub[0].strip()}!{sub[1].strip()}"
+        elif "!" in u:
+            # V1 URL structure: /#!ID!KEY
+            match = re.findall(r"/#!(.*)", u)
+            if match:
+                path = match[0].split("?", 1)[0].rstrip("/")
+                return path
+            marker = "/#!" if "/#!" in u else "#!"
+            parts = u.split(marker, 1)[1].split("?", 1)[0].rstrip("/")
+            return parts
+        raise RequestError(f"Url key missing or invalid: {url}")
 
     def _process_file(self, file, shared_keys):
         if file["t"] == 0 or file["t"] == 1:
@@ -657,10 +695,138 @@ class Mega:
         nodes = self.get_files()
         return self.get_folder_link(nodes[node_id])
 
+    def download_folder_url(self, url, dest_path=None):
+        """
+        Download all files in a public Mega folder.
+        Returns a list of Path objects for downloaded files.
+        """
+        u = str(url or "").strip()
+        folder_handle = None
+        folder_key = None
+        if "/folder/" in u:
+            parts = u.split("/folder/", 1)[1].split("?", 1)[0].rstrip("/")
+            if "#" in parts:
+                h, k = parts.split("#", 1)
+                folder_handle = h.split("/")[0].strip()
+                folder_key = k.split("/")[0].strip()
+        if not folder_handle or not folder_key:
+            for marker in ("/#F!", "/#f!", "#F!", "#f!"):
+                if marker in u:
+                    parts = u.split(marker, 1)[1].split("?", 1)[0].rstrip("/")
+                    sub = parts.split("!")
+                    if len(sub) >= 2:
+                        folder_handle = sub[0].strip()
+                        folder_key = sub[1].strip()
+                        break
+
+        if not folder_handle or not folder_key:
+            raise RequestError(f"Invalid or unrecognized folder URL: {url}")
+
+        rand_id = random.randint(0, 2**31 - 1)
+        url_api = f"{self.schema}://g.api.{self.domain}/cs?id={rand_id}&n={folder_handle}"
+        resp = requests.post(
+            url_api,
+            data=json.dumps([{"a": "f", "c": 1, "r": 1}]),
+            timeout=self.timeout,
+        )
+        data = resp.json()
+        if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+            raise RequestError("Failed to query folder nodes")
+
+        nodes = data[0].get("f", [])
+        if not nodes:
+            return []
+
+        master_key_a32 = base64_to_a32(folder_key)
+        dest_dir = Path(dest_path) if dest_path else Path.cwd()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        downloaded_files = []
+        for node in nodes:
+            if node.get("t") != 0:
+                continue
+            k_val = node.get("k", "")
+            if ":" not in k_val:
+                continue
+            k_enc = k_val.split(":")[1]
+            try:
+                k_a32 = base64_to_a32(k_enc)
+                node_key_a32 = decrypt_key(k_a32, master_key_a32)
+                k_derived = (
+                    node_key_a32[0] ^ node_key_a32[4],
+                    node_key_a32[1] ^ node_key_a32[5],
+                    node_key_a32[2] ^ node_key_a32[6],
+                    node_key_a32[3] ^ node_key_a32[7],
+                )
+                raw_attr = base64_url_decode(node.get("a", ""))
+                attr = decrypt_attr(raw_attr, k_derived)
+                if not attr or "n" not in attr:
+                    continue
+                file_name = clean_filename(attr["n"])
+                bar_title = "".join(c for c in file_name if ord(c) < 128).strip() or "Downloading"
+                file_size = int(node.get("s", 0))
+                file_handle = node.get("h")
+
+                rand_req_id = random.randint(0, 2**31 - 1)
+                r_node = requests.post(
+                    f"{self.schema}://g.api.{self.domain}/cs?id={rand_req_id}&n={folder_handle}",
+                    data=json.dumps([{"a": "g", "g": 1, "n": file_handle}]),
+                    timeout=self.timeout,
+                )
+                res = r_node.json()
+                if not (isinstance(res, list) and res and isinstance(res[0], dict) and "g" in res[0]):
+                    logger.warning(f"Failed to get download URL for node {file_name}")
+                    continue
+
+                file_url = res[0]["g"]
+                output_file = dest_dir / file_name
+
+                k_str = a32_to_str(k_derived)
+                iv = node_key_a32[4:6] + (0, 0)
+                counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
+                aes = AES.new(k_str, AES.MODE_CTR, counter=counter)
+
+                input_file = requests.get(file_url, stream=True, timeout=self.timeout).raw
+                tmp_name = "".join(random.sample(charts, 4)) + ".tmp"
+                temp_output_path = dest_dir / tmp_name
+                try:
+                    with open(temp_output_path, mode="w+b") as temp_out:
+                        with safe_alive_bar(file_size, title=bar_title) as bar:
+                            for chunk_start, chunk_size in get_chunks(file_size):
+                                chunk = input_file.read(chunk_size)
+                                if not chunk:
+                                    break
+                                temp_out.write(aes.decrypt(chunk))
+                                bar(len(chunk))
+
+                    if output_file.exists():
+                        try:
+                            output_file.unlink()
+                        except OSError:
+                            pass
+                    shutil.move(str(temp_output_path), str(output_file))
+                    downloaded_files.append(output_file)
+                finally:
+                    if temp_output_path.exists():
+                        try:
+                            temp_output_path.unlink()
+                        except OSError:
+                            pass
+            except Exception as e:
+                import traceback
+                logger.error(f"Error downloading folder node: {traceback.format_exc()}")
+                continue
+
+        return downloaded_files
+
     def download_url(self, url, dest_path=None, dest_filename=None):
         """
-        Download a file by it's public url
+        Download a file or public folder by its public url
         """
+        u = str(url or "").strip()
+        if "/folder/" in u or "/#F!" in u or "#F!" in u or "/#f!" in u or "#f!" in u:
+            return self.download_folder_url(u, dest_path=dest_path)
+
         path = self._parse_url(url).split("!")
         file_id = path[0]
         file_key = path[1]
@@ -713,72 +879,72 @@ class Mega:
         attribs = decrypt_attr(attribs, k)
 
         if dest_filename is not None:
-            file_name = dest_filename
+            file_name = clean_filename(dest_filename)
         else:
-            file_name = attribs["n"]
+            file_name = clean_filename(attribs["n"])
+        bar_title = "".join(c for c in file_name if ord(c) < 128).strip() or "Downloading"
 
         input_file = requests.get(file_url, stream=True).raw
 
         if dest_path is None:
-            dest_path = ""
+            dest_dir = Path.cwd()
         else:
-            dest_path += "/"
+            dest_dir = Path(dest_path)
+            dest_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(
-            "".join(random.sample(charts, 4)) + ".tmp", mode="w+b"
-        ) as temp_output_file:
-            k_str = a32_to_str(k)
-            counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
-            aes = AES.new(k_str, AES.MODE_CTR, counter=counter)
+        temp_name = "".join(random.sample(charts, 4)) + ".tmp"
+        temp_output_path = dest_dir / temp_name
+        output_path = dest_dir / file_name
 
-            mac_str = "\0" * 16
-            mac_encryptor = AES.new(k_str, AES.MODE_CBC, mac_str.encode("utf8"))
-            iv_str = a32_to_str([iv[0], iv[1], iv[0], iv[1]])
+        try:
+            with open(temp_output_path, mode="w+b") as temp_output_file:
+                k_str = a32_to_str(k)
+                counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
+                aes = AES.new(k_str, AES.MODE_CTR, counter=counter)
 
-            start_time = time.time()
-            downloaded = 0
+                mac_str = "\0" * 16
+                mac_encryptor = AES.new(k_str, AES.MODE_CBC, mac_str.encode("utf8"))
+                iv_str = a32_to_str([iv[0], iv[1], iv[0], iv[1]])
 
-            with alive_bar(file_size, title=file_name, theme=None) as bar:
-                for chunk_start, chunk_size in get_chunks(file_size):
-                    chunk = input_file.read(chunk_size)
-                    chunk = aes.decrypt(chunk)
-                    temp_output_file.write(chunk)
-
-                    downloaded += len(chunk)
-                    speed = downloaded / (time.time() - start_time)
-                    eta = (file_size - downloaded) / speed if speed else 0
-                    pro = create_progress_bar(
-                        downloaded, file_size, file_name, eta, speed
-                    )
-                    print(pro)
+                with safe_alive_bar(file_size, title=bar_title) as bar:
+                    for chunk_start, chunk_size in get_chunks(file_size):
+                        chunk = input_file.read(chunk_size)
+                        if not chunk:
+                            break
+                        chunk = aes.decrypt(chunk)
+                        temp_output_file.write(chunk)
+                        bar(len(chunk))
 
                 encryptor = AES.new(k_str, AES.MODE_CBC, iv_str)
+                i = 0
                 for i in range(0, len(chunk) - 16, 16):
                     block = chunk[i : i + 16]
                     encryptor.encrypt(block)
 
                 # fix for files under 16 bytes failing
-                if file_size > 16:
+                if file_size > 16 and len(chunk) > 16:
                     i += 16
                 else:
                     i = 0
 
-                block = chunk[i : i + 16]
+                block = chunk[i : i + 16] if chunk else b""
                 if len(block) % 16:
                     block += b"\0" * (16 - (len(block) % 16))
                 mac_str = mac_encryptor.encrypt(encryptor.encrypt(block))
 
-                file_info = os.stat(temp_output_file.name)
-                logger.info("%s of %s downloaded", file_info.st_size, file_size)
-            file_mac = str_to_a32(mac_str)
-            # check mac integrity
-            # if (file_mac[0] ^ file_mac[1],
-            #        file_mac[2] ^ file_mac[3]) != meta_mac:
-            #    raise ValueError('Mismatched mac')
-            output_path = Path(dest_path + file_name)
-            shutil.copy(temp_output_file.name, output_path)
-        os.unlink(temp_output_file.name)
-        return output_path
+            if output_path.exists():
+                try:
+                    output_path.unlink()
+                except OSError:
+                    pass
+            shutil.move(str(temp_output_path), str(output_path))
+            return output_path
+        finally:
+            if temp_output_path.exists():
+                try:
+                    temp_output_path.unlink()
+                except OSError:
+                    pass
 
     def upload(self, filename, dest=None, dest_filename=None):
         # determine storage node
